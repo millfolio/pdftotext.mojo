@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#
+# pdftotext — run the extractor with the zlib shim resolvable, no `pixi run`
+# needed. The compiled binary dlopens libzlibmojo.so via $CONDA_PREFIX/lib; this
+# wrapper points CONDA_PREFIX at the pixi env (and builds the binary + shim on
+# first use), so you can just:
+#
+#   tools/pdftotext file.pdf
+#   tools/pdftotext --info file.pdf
+#
+# Symlink it onto your PATH if you like:  ln -s "$PWD/tools/pdftotext" ~/.local/bin/
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ENV="$ROOT/.pixi/envs/default"
+BIN="$ROOT/build/pdftotext"
+
+# Build the binary + zlib shim on first use (or if the shim is missing).
+if [ ! -x "$BIN" ] || [ ! -f "$ENV/lib/libzlibmojo.so" ]; then
+    ( cd "$ROOT" && pixi run build ) >&2
+fi
+
+export CONDA_PREFIX="$ENV"
+exec "$BIN" "$@"

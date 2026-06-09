@@ -18,12 +18,23 @@ PDF bytes ─▶ find `stream … endstream` objects
           ─▶ text
 ```
 
-## Use
+## CLI
 
 ```sh
-pixi run extract -- path/to/file.pdf      # prints extracted text
-pixi run test                             # extraction gates (fixtures + zlib path)
+tools/pdftotext file.pdf                 # extract + print text
+tools/pdftotext --info file.pdf          # object / page counts
+tools/pdftotext a.pdf b.pdf              # multiple files (separated by headers)
+tools/pdftotext --help
 ```
+
+`tools/pdftotext` builds the binary + zlib shim on first use and resolves the
+shim for you — no `pixi run` needed. Symlink it onto your PATH if you like:
+
+```sh
+ln -s "$PWD/tools/pdftotext" ~/.local/bin/pdftotext
+```
+
+Equivalents: `pixi run extract -- file.pdf`, and `pixi run test` (the gates).
 
 ```mojo
 from pdf import read_file, extract_text
@@ -32,10 +43,9 @@ print(extract_text(read_file("doc.pdf")))
 
 Depends on the sibling `../zlib.mojo` checkout (the `ffi` task builds its shim
 into this env). Build a consumer with `-I src -I ../zlib.mojo/src`. The compiled
-binary needs to find `libzlibmojo.so` at runtime — run it through `pixi run`
-(sets `CONDA_PREFIX`) or with the shim relocated next to it (the headgate
-distribution does this with `@loader_path`, like flare's shims). Running
-`./build/pdftotext` bare with no `CONDA_PREFIX` won't find the shim.
+binary dlopens `libzlibmojo.so` via `$CONDA_PREFIX/lib` — `tools/pdftotext` (or
+`pixi run`) sets that; a relocated copy next to the binary works too (the
+headgate distribution does this with `@loader_path`, like flare's shims).
 
 ## Status
 
