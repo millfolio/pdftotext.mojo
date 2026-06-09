@@ -1,7 +1,7 @@
 """pdf extraction gate: content-stream text ops + a FlateDecode round-trip
 (deflate a content stream via zlib.mojo, assemble a minimal PDF, extract)."""
 
-from pdf import extract_text, extract_content
+from pdf import extract_text, extract_content, read_file
 from zlib import deflate
 
 
@@ -39,6 +39,13 @@ def main() raises:
     if t2.find("Flate works!") == -1:
         raise Error("FlateDecode extraction failed: [" + t2 + "]")
 
+    # 3. Real-PDF fixture: full path through the object map + page tree (xref,
+    #    catalog/pages/page, FlateDecode content, base-14 Helvetica/WinAnsi).
+    var t3 = extract_text(read_file("tests/fixtures/hello.pdf"))
+    if t3.find("Hello, headgate!") == -1 or t3.find("PDF parsing in pure Mojo.") == -1:
+        raise Error("hello.pdf extraction failed: [" + t3 + "]")
+
     print("pdf extraction OK")
     print("  text ops -> Hello, PDF! / Second line")
     print("  flate    -> ", t2)
+    print("  hello.pdf -> both lines via page tree")

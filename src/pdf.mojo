@@ -54,6 +54,14 @@ def _is_alpha(c: UInt8) -> Bool:
     return (c >= 65 and c <= 90) or (c >= 97 and c <= 122)
 
 
+def _is_digit(c: UInt8) -> Bool:
+    return c >= 48 and c <= 57
+
+
+def _is_ws(c: UInt8) -> Bool:
+    return c == 32 or c == 9 or c == 10 or c == 13 or c == 12 or c == 0
+
+
 def _hexval(c: UInt8) -> Int:
     if c >= 48 and c <= 57:
         return Int(c) - 48
@@ -238,8 +246,240 @@ def extract_content(content: List[UInt8]) raises -> String:
     return out^
 
 
+# ── object map + page tree (reliable content-stream selection) ───────────────
+
+struct ObjMap(Movable):
+    """Object number -> byte offset of its body (just after `N G obj`). Built by
+    scanning for `obj` keywords — robust to a broken/absent xref, and avoids
+    parsing xref *streams*. (Objects inside compressed /ObjStm are not seen — a
+    later phase.)"""
+
+    var nums: List[Int]
+    var offs: List[Int]
+
+    def __init__(out self):
+        self.nums = List[Int]()
+        self.offs = List[Int]()
+
+    def get(self, num: Int) -> Int:
+        for i in range(len(self.nums)):
+            if self.nums[i] == num:
+                return self.offs[i]
+        return -1
+
+
+def _build_objmap(data: List[UInt8]) -> ObjMap:
+    var m = ObjMap()
+    var kw = _ascii("obj")
+    var n = len(data)
+    var pos = 0
+    while True:
+        var o = _find(data, kw, pos)
+        if o == -1:
+            break
+        pos = o + 3
+        # "obj" must be a token: next char a delimiter (not part of "object" etc).
+        if o + 3 < n and _is_alpha(data[o + 3]):
+            continue
+        # Back up over: ws, gen digits, ws, num digits.
+        var p = o - 1
+        while p >= 0 and _is_ws(data[p]):
+            p -= 1
+        var ge = p
+        while p >= 0 and _is_digit(data[p]):
+            p -= 1
+        if p == ge:
+            continue
+        while p >= 0 and _is_ws(data[p]):
+            p -= 1
+        var ne = p
+        while p >= 0 and _is_digit(data[p]):
+            p -= 1
+        if p == ne:
+            continue
+        var num = 0
+        for k in range(p + 1, ne + 1):
+            num = num * 10 + (Int(data[k]) - 48)
+        m.nums.append(num)
+        m.offs.append(o + 3)
+    return m^
+
+
+def _read_int_fwd(data: List[UInt8], mut p: Int) -> Int:
+    """Skip whitespace then read a non-negative integer at `p`; advance `p`. -1 if none."""
+    var n = len(data)
+    while p < n and _is_ws(data[p]):
+        p += 1
+    var v = 0
+    var any = False
+    while p < n and _is_digit(data[p]):
+        v = v * 10 + (Int(data[p]) - 48)
+        p += 1
+        any = True
+    return v if any else -1
+
+
+def _parse_ref(data: List[UInt8], mut p: Int) -> Int:
+    """Parse `N G R` at `p` (after skipping ws); return N (object number) or -1."""
+    var save = p
+    var num = _read_int_fwd(data, p)
+    if num < 0:
+        p = save
+        return -1
+    var gen = _read_int_fwd(data, p)
+    if gen < 0:
+        p = save
+        return -1
+    var n = len(data)
+    while p < n and _is_ws(data[p]):
+        p += 1
+    if p < n and data[p] == 82:  # 'R'
+        p += 1
+        return num
+    p = save
+    return -1
+
+
+def _obj_end(data: List[UInt8], start: Int) -> Int:
+    var e = _find(data, _ascii("endobj"), start)
+    return e if e != -1 else len(data)
+
+
+def _contents_refs(data: List[UInt8], lo: Int, hi: Int) -> List[Int]:
+    """Object numbers referenced by `/Contents` (a single ref or an array)."""
+    var out = List[Int]()
+    var key = _ascii("/Contents")
+    var k = _find(data, key, lo)
+    if k == -1 or k >= hi:
+        return out^
+    var p = k + len(key)
+    var n = len(data)
+    while p < n and _is_ws(data[p]):
+        p += 1
+    if p < n and data[p] == 91:  # '['
+        p += 1
+        while True:
+            while p < n and _is_ws(data[p]):
+                p += 1
+            if p >= n or data[p] == 93:  # ']'
+                break
+            var r = _parse_ref(data, p)
+            if r < 0:
+                break
+            out.append(r)
+    else:
+        var r = _parse_ref(data, p)
+        if r >= 0:
+            out.append(r)
+    return out^
+
+
+def decode_object_stream(data: List[UInt8], omap: ObjMap, objnum: Int) raises -> List[UInt8]:
+    """Decoded bytes of object `objnum`'s stream (inflating /FlateDecode)."""
+    var start = omap.get(objnum)
+    if start < 0:
+        return List[UInt8]()
+    var hi = _obj_end(data, start)
+    var s = _find(data, _ascii("stream"), start)
+    if s == -1 or s >= hi:
+        return List[UInt8]()
+    var ds = s + 6
+    var n = len(data)
+    if ds < n and data[ds] == 13:
+        ds += 1
+    if ds < n and data[ds] == 10:
+        ds += 1
+    var e = _find(data, _ascii("endstream"), ds)
+    if e == -1:
+        return List[UInt8]()
+    var re = e
+    if re > ds and data[re - 1] == 10:
+        re -= 1
+    if re > ds and data[re - 1] == 13:
+        re -= 1
+    var raw = List[UInt8]()
+    for i in range(ds, re):
+        raw.append(data[i])
+    if _window_has(data, _ascii("/FlateDecode"), start, s):
+        try:
+            return inflate(raw)
+        except:
+            return raw^
+    return raw^
+
+
+def _is_page_leaf(data: List[UInt8], lo: Int, hi: Int) -> Bool:
+    """A page leaf has /Contents and a `/Page` type (not `/Pages`)."""
+    if not _window_has(data, _ascii("/Contents"), lo, hi):
+        return False
+    var key = _ascii("/Page")
+    var k = _find(data, key, lo)
+    while k != -1 and k < hi:
+        var after = k + len(key)
+        if after >= len(data) or data[after] != 115:  # not 's' -> "/Page"
+            return True
+        k = _find(data, key, k + 1)
+    return False
+
+
+def page_objs(data: List[UInt8], omap: ObjMap) -> List[Int]:
+    """Object numbers of the page leaves, in object-number order (a good proxy for
+    reading order; the page-tree /Kids order is a refinement for later)."""
+    # selection sort of object numbers (small N).
+    var order = List[Int]()
+    for i in range(len(omap.nums)):
+        order.append(omap.nums[i])
+    for i in range(len(order)):
+        var mi = i
+        for j in range(i + 1, len(order)):
+            if order[j] < order[mi]:
+                mi = j
+        var t = order[i]
+        order[i] = order[mi]
+        order[mi] = t
+
+    var pages = List[Int]()
+    for i in range(len(order)):
+        var start = omap.get(order[i])
+        var hi = _obj_end(data, start)
+        if _is_page_leaf(data, start, hi):
+            pages.append(order[i])
+    return pages^
+
+
+def page_content(data: List[UInt8], omap: ObjMap, page_num: Int) raises -> List[UInt8]:
+    """Concatenated decoded content streams for one page."""
+    var start = omap.get(page_num)
+    var hi = _obj_end(data, start)
+    var refs = _contents_refs(data, start, hi)
+    var out = List[UInt8]()
+    for i in range(len(refs)):
+        var c = decode_object_stream(data, omap, refs[i])
+        for j in range(len(c)):
+            out.append(c[j])
+        out.append(10)  # separate streams with a newline
+    return out^
+
+
 def extract_text(data: List[UInt8]) raises -> String:
-    """Top level: decode content streams and concatenate their extracted text."""
+    """Top level: walk the object map to the page leaves, decode each page's
+    /Contents, and extract its text. Falls back to the stream-scan heuristic if no
+    pages are found (broken/structureless PDFs)."""
+    var omap = _build_objmap(data)
+    var pages = page_objs(data, omap)
+    if len(pages) == 0:
+        return _extract_fallback(data)
+    var out = String("")
+    for pi in range(len(pages)):
+        if pi > 0:
+            out += "\n"
+        var content = page_content(data, omap, pages[pi])
+        out += extract_content(content)
+    return out^
+
+
+def _extract_fallback(data: List[UInt8]) raises -> String:
+    """Heuristic: decode every BT-bearing stream and concatenate its text."""
     var streams = decode_streams(data)
     var out = String("")
     for idx in range(len(streams)):
