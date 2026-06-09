@@ -45,7 +45,14 @@ def main() raises:
     if t3.find("Hello, headgate!") == -1 or t3.find("PDF parsing in pure Mojo.") == -1:
         raise Error("hello.pdf extraction failed: [" + t3 + "]")
 
+    # 4. /ToUnicode: the content shows hex codes <0102030304>; only the font's
+    #    CMap turns them into "Hello".
+    var t4 = extract_text(read_file("tests/fixtures/cmap.pdf"))
+    if t4.find("Hello") == -1:
+        raise Error("cmap.pdf /ToUnicode extraction failed: [" + t4 + "]")
+
     print("pdf extraction OK")
-    print("  text ops -> Hello, PDF! / Second line")
-    print("  flate    -> ", t2)
+    print("  text ops  -> Hello, PDF! / Second line")
+    print("  flate     -> ", t2)
     print("  hello.pdf -> both lines via page tree")
+    print("  cmap.pdf  -> 'Hello' via /ToUnicode")

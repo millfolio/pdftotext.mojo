@@ -22,7 +22,7 @@ PDF bytes ─▶ find `stream … endstream` objects
 
 ```sh
 pixi run extract -- path/to/file.pdf      # prints extracted text
-pixi run test                             # extraction gate (incl. FlateDecode via zlib.mojo)
+pixi run test                             # extraction gates (fixtures + zlib path)
 ```
 
 ```mojo
@@ -31,28 +31,33 @@ print(extract_text(read_file("doc.pdf")))
 ```
 
 Depends on the sibling `../zlib.mojo` checkout (the `ffi` task builds its shim
-into this env). Build a consumer with `-I src -I ../zlib.mojo/src`.
+into this env). Build a consumer with `-I src -I ../zlib.mojo/src`. The compiled
+binary needs to find `libzlibmojo.so` at runtime — run it through `pixi run`
+(sets `CONDA_PREFIX`) or with the shim relocated next to it (the headgate
+distribution does this with `@loader_path`, like flare's shims). Running
+`./build/pdftotext` bare with no `CONDA_PREFIX` won't find the shim.
 
-## Status — early; v1
+## Status
 
-**Works** (deterministic gate, `pixi run test`): content-stream text operators
-(literal + hex strings, line breaks) and the **full FlateDecode path through
-zlib.mojo** — a compressed content stream is inflated and its text extracted.
+**Works** (`pixi run test` + verified on real PDFs, e.g. macOS `cupsfilter`
+output):
 
-**Not yet** (the next phases — real-world robustness):
+- **Reliable content-stream selection** — an object map (scan `N G obj`, robust
+  to a broken/absent xref) → page leaves (`/Type /Page` + `/Contents`) → resolve
+  `/Contents` refs → decode + concatenate per page.
+- **FlateDecode** streams inflated via [zlib.mojo](https://github.com/millrace/zlib.mojo).
+- **Text operators** — literal `(…)` + hex `<…>` strings, line breaks on Td/TD/Tm/T*/'/".
+- **`/ToUnicode` CMaps** — per-font `bfchar`/`bfrange` maps applied (1- or 2-byte
+  codes); base-14 WinAnsi fonts fall back to Latin-1.
 
-1. **Reliable content-stream selection.** v1 finds streams by scanning for
-   `stream`/`endstream` and keeps those containing `BT`. Real PDFs need the
-   xref + page-tree walk to pick the page `/Contents` exactly (and to handle
-   PDF 1.5+ cross-reference / object streams). Until then, some real PDFs
-   extract partially or not at all.
-2. **Font encoding → Unicode.** Strings are decoded as single-byte Latin-1/ASCII.
-   Fonts with a `/ToUnicode` CMap, custom `/Differences` encodings, or CID/Type0
-   (2-byte) fonts need that map applied, or the output is glyph-code garbage.
-3. **More filters** — LZW, ASCII85, ASCIIHex (v1 is FlateDecode + raw only).
-4. **Encrypted PDFs, scanned/image PDFs (OCR)** — out of scope.
+**Not yet** (next):
 
-So: solid on born-digital, FlateDecode, simple-font PDFs; the xref/page-tree
-parser and `/ToUnicode` support are what turn "some PDFs" into "most PDFs".
+1. **PDF 1.5+ compressed objects** — xref *streams* + `/ObjStm` (objects the
+   `N G obj` scan can't see). A heuristic stream-scan fallback covers some of
+   these meanwhile.
+2. **Indirect `/Resources` / `/Font`** (v1 reads an inline `/Font << … >>`),
+   `/Differences` encodings, CID/Type0 width handling.
+3. **More filters** — LZW, ASCII85, ASCIIHex (v1 is FlateDecode + raw).
+4. **Encrypted / scanned-image (OCR) PDFs** — out of scope.
 
 macOS / Apple Silicon (`osx-arm64`), Mojo nightly `1.0.0b2.dev2026060706`.
