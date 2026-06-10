@@ -435,7 +435,11 @@ def decode_object_stream(data: List[UInt8], omap: ObjMap, objnum: Int) raises ->
         try:
             return inflate(raw)
         except:
-            return raw^
+            # Inflate failed (corrupt stream, or the zlib shim couldn't load —
+            # e.g. run bare without CONDA_PREFIX). NEVER emit the raw compressed
+            # bytes as "text"; drop the stream so the failure shows as missing
+            # text, not terminal-garbling binary.
+            return List[UInt8]()
     return raw^
 
 
