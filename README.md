@@ -1,11 +1,11 @@
 # pdftotext.mojo
 
-> Part of [**millrace**](https://millrace.me) — local-first tooling in Mojo.
+> Part of [**millfolio**](https://millfolio.app) — local-first tooling in Mojo.
 
 A **from-scratch PDF → text** extractor in Mojo. No C PDF engine, no Python — it
 parses the PDF itself and decompresses `/FlateDecode` streams via
-[zlib.mojo](https://github.com/millrace/zlib.mojo). Built for headgate's
-[document mode](https://github.com/millrace/headgate/blob/main/DOCUMENT-MODE.md):
+[zlib.mojo](https://github.com/millfolio/zlib.mojo). Built for headgate's
+[document mode](https://github.com/millfolio/headgate/blob/main/DOCUMENT-MODE.md):
 extract text from your files locally, so the bytes never leave the machine.
 
 ## Pipeline
@@ -55,7 +55,7 @@ output):
 - **Reliable content-stream selection** — an object map (scan `N G obj`, robust
   to a broken/absent xref) → page leaves (`/Type /Page` + `/Contents`) → resolve
   `/Contents` refs → decode + concatenate per page.
-- **FlateDecode** streams inflated via [zlib.mojo](https://github.com/millrace/zlib.mojo).
+- **FlateDecode** streams inflated via [zlib.mojo](https://github.com/millfolio/zlib.mojo).
 - **Text operators** — literal `(…)` + hex `<…>` strings, line breaks on Td/TD/Tm/T*/'/".
 - **`/ToUnicode` CMaps** — per-font `bfchar`/`bfrange` maps applied (1- or 2-byte
   codes); base-14 WinAnsi fonts fall back to Latin-1.
@@ -70,4 +70,4 @@ output):
 3. **More filters** — LZW, ASCII85, ASCIIHex (v1 is FlateDecode + raw).
 4. **Encrypted / scanned-image (OCR) PDFs** — out of scope.
 
-macOS / Apple Silicon (`osx-arm64`), Mojo nightly `1.0.0b2.dev2026060706`.
+macOS / Apple Silicon (`osx-arm64`), Mojo nightly `1.0.0b3.dev2026061206`.
