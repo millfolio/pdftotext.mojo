@@ -234,12 +234,29 @@ alias _H_WORDGAP_EM = 0.7      # Δx beyond this × font size ⇒ space
 alias _TJ_WORDGAP = 200.0      # |TJ adjustment| (‰ em) beyond this ⇒ space
 
 
-def _last_byte(s: String) -> Int:
-    """Last raw byte of `s`, or -1 if empty (for trailing-space/newline checks)."""
-    var bl = s.byte_length()
-    if bl == 0:
-        return -1
-    return Int(s.unsafe_ptr()[bl - 1])
+struct Buf(Movable):
+    """An output buffer over `List[UInt8]` so `+=` is amortized O(1). Mojo's
+    `String +=` reallocates per append — O(n^2) on the per-glyph text hot path,
+    which hung extraction for minutes on large / per-glyph-positioned PDFs."""
+    var data: List[UInt8]
+
+    def __init__(out self):
+        self.data = List[UInt8]()
+
+    def __iadd__(mut self, s: String):
+        var b = s.as_bytes()
+        for i in range(len(b)):
+            self.data.append(b[i])
+
+    def last_byte(self) -> Int:
+        """Last byte, or -1 if empty (trailing space/newline dedupe)."""
+        var n = len(self.data)
+        if n == 0:
+            return -1
+        return Int(self.data[n - 1])
+
+    def to_string(self) -> String:
+        return String(unsafe_from_utf8=Span(self.data))
 
 
 def _read_number(content: List[UInt8], mut p: Int) -> Float64:
@@ -275,13 +292,14 @@ def _read_number(content: List[UInt8], mut p: Int) -> Float64:
     return sign * (ipart + frac / scale)
 
 
-def _show_tj_array(content: List[UInt8], start: Int, cur: Font, mut out: String) raises -> Int:
+def _show_tj_array(content: List[UInt8], start: Int, cur: Font, mut out: Buf) raises -> Int:
     """Show a `TJ` operand array `[ (s) num <h> num … ]` at `start` (the `[`):
     concatenate the strings, turning a number whose magnitude opens a word-sized
     gap into a single space. Return the index past `]`."""
     var n = len(content)
     var i = start + 1  # past '['
     while i < n:
+        var _s = i
         var c = content[i]
         if c == 93:  # ]
             i += 1
@@ -300,10 +318,15 @@ def _show_tj_array(content: List[UInt8], start: Int, cur: Font, mut out: String)
             # moves text LEFT/together, a *positive* gap opens to the right when
             # large. A large magnitude either way ≈ a word break in practice.
             if adj > _TJ_WORDGAP or adj < -_TJ_WORDGAP:
-                var lb = _last_byte(out)
+                var lb = out.last_byte()
                 if lb != -1 and lb != 32 and lb != 10:  # not after space/newline
                     out += " "
         else:
+            i += 1
+        # Safety: _read_number RESETS its position when a +/-/. isn't a real number
+        # (no digits), so the kerning branch can leave `i` parked → infinite loop
+        # (stream 4 spun 2B times frozen at one byte). Guarantee progress.
+        if i == _s:
             i += 1
     return i
 
@@ -319,7 +342,7 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
     word-sized gap. This keeps a glyph-by-glyph-positioned line (each char in its
     own Tj with a Td between, or a TJ array of single glyphs) from exploding into
     one character per line."""
-    var out = String("")
+    var out = Buf()
     var n = len(content)
     var i = 0
     var cur = Font()           # default: Latin-1
@@ -332,6 +355,7 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
     var have_pos = False       # seen a position yet (first move sets the origin)
     var font_size = 12.0       # current /Fx <size> Tf size (for the word gap)
     while i < n:
+        var _start = i
         var c = content[i]
         if c == 40:  # ( literal string
             var raw = List[UInt8]()
@@ -414,10 +438,16 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
             i = j
         else:
             i += 1
-    return out^
+        # Safety net: every branch above must advance `i`. The numeric/operator
+        # path can leave `i` parked on a token it didn't consume (e.g. a non-number
+        # where _read_number leaves p put) → an infinite loop on some content
+        # (file_1 hung 4+ min). Guarantee forward progress.
+        if i == _start:
+            i += 1
+    return out.to_string()
 
 
-def _advance(mut out: String, mut x: Float64, mut y: Float64, have_pos: Bool,
+def _advance(mut out: Buf, mut x: Float64, mut y: Float64, have_pos: Bool,
              nx: Float64, ny: Float64, word_gap: Float64):
     """Move the text pen to (nx, ny), emitting a newline on a real vertical move
     and a space on a word-sized horizontal gap (> `word_gap`) on the same line."""
@@ -428,7 +458,7 @@ def _advance(mut out: String, mut x: Float64, mut y: Float64, have_pos: Bool,
         else:
             var dx = nx - x
             if dx > word_gap:
-                var lb = _last_byte(out)
+                var lb = out.last_byte()
                 if lb != -1 and lb != 32 and lb != 10:  # not after space/newline
                     out += " "
     x = nx
@@ -669,29 +699,29 @@ struct Font(Movable, Copyable):
     where the byte already IS the character."""
 
     var code_len: Int          # bytes per character code (1 or 2)
-    var codes: List[Int]
-    var vals: List[String]
+    var map: Dict[Int, String]  # char code -> Unicode text; O(1) lookup (was a
+    #                             linear List scan per char → O(n^2) on big CMaps)
 
     def __init__(out self):
         self.code_len = 1
-        self.codes = List[Int]()
-        self.vals = List[String]()
+        self.map = Dict[Int, String]()
 
     def has_map(self) -> Bool:
-        return len(self.codes) > 0
+        return len(self.map) > 0
 
-    def _lookup(self, code: Int) -> Int:
-        for i in range(len(self.codes)):
-            if self.codes[i] == code:
-                return i
-        return -1
-
-    def decode(self, raw: List[UInt8]) -> String:
-        var o = String("")
+    def decode(self, raw: List[UInt8]) raises -> String:
+        # Build into a byte buffer (amortized O(1) append), not String += per char
+        # (O(n^2) — a fallback literal/blob can be huge, which hung extraction).
+        var buf = List[UInt8]()
         if not self.has_map():
             for i in range(len(raw)):
-                o += chr(Int(raw[i]))
-            return o^
+                var b = Int(raw[i])
+                if b < 128:
+                    buf.append(UInt8(b))
+                else:  # Latin-1 codepoint → 2-byte UTF-8
+                    buf.append(UInt8(0xC0 | (b >> 6)))
+                    buf.append(UInt8(0x80 | (b & 0x3F)))
+            return String(unsafe_from_utf8=Span(buf))
         var i = 0
         var n = len(raw)
         while i < n:
@@ -701,12 +731,13 @@ struct Font(Movable, Copyable):
                 i += 2
             else:
                 i += 1
-            var idx = self._lookup(code)
-            if idx >= 0:
-                o += self.vals[idx]
+            if code in self.map:
+                var sb = self.map[code].as_bytes()
+                for k in range(len(sb)):
+                    buf.append(sb[k])
             elif code >= 32 and code < 127:
-                o += chr(code)  # unmapped but printable — keep it
-        return o^
+                buf.append(UInt8(code))  # unmapped but printable — keep it
+        return String(unsafe_from_utf8=Span(buf))
 
 
 struct FontTable(Movable):
@@ -786,8 +817,7 @@ def _parse_bfchar(cmap: List[UInt8], lo: Int, hi: Int, mut f: Font):
             break
         var dst = _hex_bytes(cmap, p)
         if len(src) > 0:
-            f.codes.append(_bytes_to_int(src))
-            f.vals.append(_utf16be(dst))
+            f.map[_bytes_to_int(src)] = _utf16be(dst)
 
 
 def _parse_bfrange(cmap: List[UInt8], lo: Int, hi: Int, mut f: Font):
@@ -817,8 +847,7 @@ def _parse_bfrange(cmap: List[UInt8], lo: Int, hi: Int, mut f: Font):
                     p += 1
                 if p < hi and cmap[p] == 60:
                     var d = _hex_bytes(cmap, p)
-                    f.codes.append(code)
-                    f.vals.append(_utf16be(d))
+                    f.map[code] = _utf16be(d)
                     code += 1
                 else:
                     break
@@ -833,8 +862,7 @@ def _parse_bfrange(cmap: List[UInt8], lo: Int, hi: Int, mut f: Font):
                 var bb = List[UInt8]()
                 bb.append(UInt8((u >> 8) & 0xFF))
                 bb.append(UInt8(u & 0xFF))
-                f.codes.append(code)
-                f.vals.append(_utf16be(bb))
+                f.map[code] = _utf16be(bb)
                 code += 1
 
 
