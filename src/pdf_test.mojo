@@ -27,6 +27,25 @@ def main() raises:
     if t1.find("Hello, PDF!") == -1 or t1.find("Second line") == -1:
         raise Error("content extraction failed: [" + t1 + "]")
 
+    # 1b. Glyph-by-glyph positioning must NOT explode into one char per line.
+    #     A line laid out as per-glyph `(c) Tj <step> 0 Td` (a kerning/justify
+    #     engine, e.g. some bank statements) stays one line; the wide gap with no
+    #     glyph becomes a single space; the real vertical move starts a new line;
+    #     a TJ array with a large kern opens a word space ("Total due").
+    var c1b = _b(
+        "BT /F1 12 Tf 72 700 Td (o) Tj 7 0 Td (o) Tj 7 0 Td (n) Tj 7 0 Td "
+        "12 0 Td (a) Tj 7 0 Td (s) Tj 7 0 Td 12 0 Td (y) Tj 7 0 Td (o) Tj "
+        "7 0 Td (u) Tj 7 0 Td -200 -16 Td "
+        "[(T) -40 (o) -20 (t) -15 (a) -10 (l) 250 (d) -20 (u) -15 (e)] TJ ET")
+    var t1b = extract_content(c1b)
+    if t1b.find("oon as you") == -1:
+        raise Error("per-glyph line collapsed/garbled: [" + t1b + "]")
+    if t1b.find("Total due") == -1:
+        raise Error("TJ word gap not honored: [" + t1b + "]")
+    # the per-glyph line must be a SINGLE line (one newline, before "Total")
+    if t1b.find("o\no") != -1:
+        raise Error("char-per-line regression: [" + t1b + "]")
+
     # 2. Full path through zlib.mojo: a /FlateDecode stream is inflated, then text
     #    extracted. Build the compressed stream in-process with zlib.deflate.
     var content = _b("BT /F1 12 Tf 72 700 Td (Flate works!) Tj ET")
@@ -53,6 +72,7 @@ def main() raises:
 
     print("pdf extraction OK")
     print("  text ops  -> Hello, PDF! / Second line")
+    print("  per-glyph -> 'oon as you' / 'Total due' (no char-per-line)")
     print("  flate     -> ", t2)
     print("  hello.pdf -> both lines via page tree")
     print("  cmap.pdf  -> 'Hello' via /ToUnicode")

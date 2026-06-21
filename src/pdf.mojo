@@ -222,21 +222,123 @@ def _name_at(content: List[UInt8], mut p: Int) -> String:
     return s^
 
 
+# Layout thresholds. The text pen position is tracked in *text-space* units, so
+# the horizontal word gap is taken relative to the current font size (a glyph
+# advance is ≈0.5 em, a real word gap is at least the width of a space ≈0.25 em
+# *on top of* the last glyph; positioning-only spaces — no space glyph — show up
+# as a Td jump noticeably larger than one glyph step). The vertical newline
+# threshold is absolute (a small move is sub/superscript; a line is many units).
+# TJ numbers are ‰ em subtracted from the pen — a big magnitude opens a word gap.
+alias _V_NEWLINE = 4.0         # |Δy| beyond this ⇒ newline
+alias _H_WORDGAP_EM = 0.7      # Δx beyond this × font size ⇒ space
+alias _TJ_WORDGAP = 200.0      # |TJ adjustment| (‰ em) beyond this ⇒ space
+
+
+def _last_byte(s: String) -> Int:
+    """Last raw byte of `s`, or -1 if empty (for trailing-space/newline checks)."""
+    var bl = s.byte_length()
+    if bl == 0:
+        return -1
+    return Int(s.unsafe_ptr()[bl - 1])
+
+
+def _read_number(content: List[UInt8], mut p: Int) -> Float64:
+    """Skip whitespace, then read a (possibly signed/decimal) PDF number at `p`;
+    advance `p` past it. Non-numbers leave `p` unchanged and return 0."""
+    var n = len(content)
+    while p < n and _is_ws(content[p]):
+        p += 1
+    var start = p
+    var sign = 1.0
+    if p < n and (content[p] == 43 or content[p] == 45):  # + -
+        if content[p] == 45:
+            sign = -1.0
+        p += 1
+    var ipart = 0.0
+    var any = False
+    while p < n and _is_digit(content[p]):
+        ipart = ipart * 10.0 + Float64(Int(content[p]) - 48)
+        p += 1
+        any = True
+    var frac = 0.0
+    var scale = 1.0
+    if p < n and content[p] == 46:  # '.'
+        p += 1
+        while p < n and _is_digit(content[p]):
+            scale *= 10.0
+            frac = frac * 10.0 + Float64(Int(content[p]) - 48)
+            p += 1
+            any = True
+    if not any:
+        p = start
+        return 0.0
+    return sign * (ipart + frac / scale)
+
+
+def _show_tj_array(content: List[UInt8], start: Int, cur: Font, mut out: String) raises -> Int:
+    """Show a `TJ` operand array `[ (s) num <h> num … ]` at `start` (the `[`):
+    concatenate the strings, turning a number whose magnitude opens a word-sized
+    gap into a single space. Return the index past `]`."""
+    var n = len(content)
+    var i = start + 1  # past '['
+    while i < n:
+        var c = content[i]
+        if c == 93:  # ]
+            i += 1
+            break
+        elif c == 40:  # ( literal
+            var raw = List[UInt8]()
+            i = _read_literal_raw(content, i, raw)
+            out += cur.decode(raw)
+        elif c == 60:  # < hex
+            var raw = List[UInt8]()
+            i = _read_hex_raw(content, i, raw)
+            out += cur.decode(raw)
+        elif _is_digit(c) or c == 45 or c == 43 or c == 46:  # a kerning number
+            var adj = _read_number(content, i)
+            # TJ numbers are subtracted from the pen (in ‰ em): a positive value
+            # moves text LEFT/together, a *positive* gap opens to the right when
+            # large. A large magnitude either way ≈ a word break in practice.
+            if adj > _TJ_WORDGAP or adj < -_TJ_WORDGAP:
+                var lb = _last_byte(out)
+                if lb != -1 and lb != 32 and lb != 10:  # not after space/newline
+                    out += " "
+        else:
+            i += 1
+    return i
+
+
 def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
     """Pull shown text from one content stream, decoding each string through the
     current font (`/Fx Tf`) — applying its /ToUnicode CMap when present, else
-    Latin-1. Positioning operators (Td/TD/Tm/T*/'/") insert a newline."""
+    Latin-1.
+
+    Line/word breaks follow the *text geometry*, not the mere presence of a
+    positioning operator: a newline is emitted only on a real vertical baseline
+    move (|Δy| > _V_NEWLINE), and a space only when a horizontal advance opens a
+    word-sized gap. This keeps a glyph-by-glyph-positioned line (each char in its
+    own Tj with a Td between, or a TJ array of single glyphs) from exploding into
+    one character per line."""
     var out = String("")
     var n = len(content)
     var i = 0
     var cur = Font()           # default: Latin-1
     var last_name = String("")
+    # Text pen position (text-space units). Td/TD are relative to the line start;
+    # Tm/cm set it absolutely. We don't have glyph widths, so x only tracks the
+    # *positioning* operators — enough to tell a word gap from a glyph advance.
+    var x = 0.0
+    var y = 0.0
+    var have_pos = False       # seen a position yet (first move sets the origin)
+    var font_size = 12.0       # current /Fx <size> Tf size (for the word gap)
     while i < n:
         var c = content[i]
         if c == 40:  # ( literal string
             var raw = List[UInt8]()
             i = _read_literal_raw(content, i, raw)
             out += cur.decode(raw)
+        elif c == 91:  # [ — TJ operand array (kerned show)
+            i = _show_tj_array(content, i, cur, out)
         elif c == 60:  # <
             if i + 1 < n and content[i + 1] == 60:
                 i += 2  # << dict
@@ -246,9 +348,52 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
                 out += cur.decode(raw)
         elif c == 47:  # /Name
             last_name = _name_at(content, i)
-        elif c == 39 or c == 34:  # ' or "
+        elif c == 39 or c == 34:  # ' or " — next-line-and-show
             out += "\n"
             i += 1
+        elif _is_digit(c) or c == 45 or c == 43 or c == 46:
+            # A numeric operand (or a run of them) — peek at the operator that
+            # follows so positioning ops can update the pen. We read up to six
+            # numbers (a Tm matrix), keeping the last two as (dx/x, dy/y).
+            var nums = List[Float64]()
+            var j = i
+            while len(nums) < 6:
+                var save = j
+                var v = _read_number(content, j)
+                if j == save:
+                    break
+                nums.append(v)
+                # stop if the next non-ws isn't another number
+                var k = j
+                while k < n and _is_ws(content[k]):
+                    k += 1
+                if k >= n or not (_is_digit(content[k]) or content[k] == 45
+                                  or content[k] == 43 or content[k] == 46):
+                    break
+            i = j
+            # whitespace, then the operator token
+            while i < n and _is_ws(content[i]):
+                i += 1
+            if i + 1 < n and content[i] == 84:  # 'T'
+                var b = content[i + 1]
+                var cnt = len(nums)
+                var gap = _H_WORDGAP_EM * font_size
+                if (b == 100 or b == 68) and cnt >= 2:  # Td / TD: dx dy
+                    var dx = nums[cnt - 2]
+                    var dy = nums[cnt - 1]
+                    _advance(out, x, y, have_pos, x + dx, y + dy, gap)
+                    have_pos = True
+                elif b == 109 and cnt >= 6:  # Tm a b c d e f (e,f = translation)
+                    _advance(out, x, y, have_pos, nums[4], nums[5], gap)
+                    have_pos = True
+                elif b == 42:  # T* — next line (leading); always a newline
+                    if have_pos:
+                        out += "\n"
+                    have_pos = True
+                elif b == 102 and cnt >= 1:  # Tf — font size precedes the op
+                    font_size = nums[cnt - 1]
+                    if font_size < 0:
+                        font_size = -font_size
         elif _is_alpha(c):
             var j = i
             while j < n and (_is_alpha(content[j]) or content[j] == 42):
@@ -256,8 +401,10 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
             var ln = j - i
             if ln == 2 and content[i] == 84:  # 'T'
                 var b = content[i + 1]
-                if b == 100 or b == 68 or b == 109 or b == 42:  # Td TD Tm T*
-                    out += "\n"
+                if b == 42:  # T* with no numeric operand
+                    if have_pos:
+                        out += "\n"
+                    have_pos = True
                 elif b == 102:  # Tf — select font
                     var idx = ft.get(last_name)
                     if idx >= 0:
@@ -268,6 +415,24 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
         else:
             i += 1
     return out^
+
+
+def _advance(mut out: String, mut x: Float64, mut y: Float64, have_pos: Bool,
+             nx: Float64, ny: Float64, word_gap: Float64):
+    """Move the text pen to (nx, ny), emitting a newline on a real vertical move
+    and a space on a word-sized horizontal gap (> `word_gap`) on the same line."""
+    if have_pos:
+        var dy = ny - y
+        if dy > _V_NEWLINE or dy < -_V_NEWLINE:
+            out += "\n"
+        else:
+            var dx = nx - x
+            if dx > word_gap:
+                var lb = _last_byte(out)
+                if lb != -1 and lb != 32 and lb != 10:  # not after space/newline
+                    out += " "
+    x = nx
+    y = ny
 
 
 def extract_content(content: List[UInt8]) raises -> String:
