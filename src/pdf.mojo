@@ -222,16 +222,37 @@ def _name_at(content: List[UInt8], mut p: Int) -> String:
     return s^
 
 
-# Layout thresholds. The text pen position is tracked in *text-space* units, so
-# the horizontal word gap is taken relative to the current font size (a glyph
-# advance is ≈0.5 em, a real word gap is at least the width of a space ≈0.25 em
-# *on top of* the last glyph; positioning-only spaces — no space glyph — show up
-# as a Td jump noticeably larger than one glyph step). The vertical newline
-# threshold is absolute (a small move is sub/superscript; a line is many units).
-# TJ numbers are ‰ em subtracted from the pen — a big magnitude opens a word gap.
-alias _V_NEWLINE = 4.0         # |Δy| beyond this ⇒ newline
-alias _H_WORDGAP_EM = 0.7      # Δx beyond this × font size ⇒ space
-alias _TJ_WORDGAP = 200.0      # |TJ adjustment| (‰ em) beyond this ⇒ space
+# Layout thresholds. The text pen position is tracked in *text-space* units. We
+# don't read per-glyph widths from the font, so we ESTIMATE each shown glyph's
+# advance as a fraction of the font size (_GLYPH_EM em) and keep a running
+# estimate of how far the rendered text has already moved the pen (`pen_w`). A
+# positioning move (Td/Tm) only opens a *space* when it jumps ahead of that
+# estimate by more than _H_WORDGAP_EM em — otherwise the move is just the
+# carriage advancing over the glyph it already drew (real-world PDFs that place
+# every glyph with its own `(c) Tj  N 0 Td` would otherwise get a space wedged
+# between *every* pair of letters — "W ells Fargo custom er"). The vertical
+# newline threshold scales with the font size too (a small move is a
+# sub/superscript; a line is roughly a full line of leading).
+alias _GLYPH_EM = 0.5         # estimated glyph advance, in em (× font size)
+alias _V_NEWLINE_EM = 0.3     # |Δy| beyond this × font size ⇒ newline
+alias _V_NEWLINE_MIN = 4.0    # …but never less than this many units (small fonts)
+# A positioning move opens a space only when it jumps past the estimated glyph
+# width by more than this × font size. A real space-only gap (no space glyph) is
+# ≥ a full space (~0.25 em) on top of a glyph; the slack here absorbs the spread
+# between our flat 0.5-em estimate and a wide glyph's true advance (W, m ≈ 0.85
+# em) so per-glyph-positioned text doesn't get a space wedged between letters.
+alias _H_WORDGAP_EM = 0.55    # Δx beyond glyphs + this × font size ⇒ space
+alias _TJ_WORDGAP = 200.0     # |TJ adjustment| (‰ em) beyond this ⇒ space
+
+
+def _est_width(s: String, font_size: Float64) -> Float64:
+    """Estimate the rendered width (text-space units) of an already-decoded show
+    string: each codepoint advances ≈_GLYPH_EM of the font size. Crude (no real
+    glyph metrics) but enough to tell a glyph's own advance from a word gap."""
+    var cps = 0
+    for _cp in s.codepoint_slices():
+        cps += 1
+    return Float64(cps) * _GLYPH_EM * font_size
 
 
 struct Buf(Movable):
@@ -292,10 +313,12 @@ def _read_number(content: List[UInt8], mut p: Int) -> Float64:
     return sign * (ipart + frac / scale)
 
 
-def _show_tj_array(content: List[UInt8], start: Int, cur: Font, mut out: Buf) raises -> Int:
+def _show_tj_array(content: List[UInt8], start: Int, cur: Font, mut out: Buf,
+                   font_size: Float64, mut pen_w: Float64) raises -> Int:
     """Show a `TJ` operand array `[ (s) num <h> num … ]` at `start` (the `[`):
     concatenate the strings, turning a number whose magnitude opens a word-sized
-    gap into a single space. Return the index past `]`."""
+    gap into a single space. Return the index past `]`. Accumulates the estimated
+    rendered width of the shown glyphs into `pen_w`."""
     var n = len(content)
     var i = start + 1  # past '['
     while i < n:
@@ -307,16 +330,23 @@ def _show_tj_array(content: List[UInt8], start: Int, cur: Font, mut out: Buf) ra
         elif c == 40:  # ( literal
             var raw = List[UInt8]()
             i = _read_literal_raw(content, i, raw)
-            out += cur.decode(raw)
+            var s = cur.decode(raw)
+            pen_w += _est_width(s, font_size)
+            out += s^
         elif c == 60:  # < hex
             var raw = List[UInt8]()
             i = _read_hex_raw(content, i, raw)
-            out += cur.decode(raw)
+            var s = cur.decode(raw)
+            pen_w += _est_width(s, font_size)
+            out += s^
         elif _is_digit(c) or c == 45 or c == 43 or c == 46:  # a kerning number
             var adj = _read_number(content, i)
             # TJ numbers are subtracted from the pen (in ‰ em): a positive value
             # moves text LEFT/together, a *positive* gap opens to the right when
-            # large. A large magnitude either way ≈ a word break in practice.
+            # large. A large magnitude either way ≈ a word break in practice. The
+            # move also shifts the pen: −adj/1000 em (it carries into pen_w so a
+            # following Td measures the gap from the right place).
+            pen_w += -(adj / 1000.0) * font_size
             if adj > _TJ_WORDGAP or adj < -_TJ_WORDGAP:
                 var lb = out.last_byte()
                 if lb != -1 and lb != 32 and lb != 10:  # not after space/newline
@@ -354,26 +384,35 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
     var y = 0.0
     var have_pos = False       # seen a position yet (first move sets the origin)
     var font_size = 12.0       # current /Fx <size> Tf size (for the word gap)
+    # Estimated width (text-space units) of the glyphs shown since the last
+    # positioning move — subtracted from the next Td/Tm step so the carriage
+    # advancing over its own glyphs isn't mistaken for a word gap.
+    var pen_w = 0.0
     while i < n:
         var _start = i
         var c = content[i]
         if c == 40:  # ( literal string
             var raw = List[UInt8]()
             i = _read_literal_raw(content, i, raw)
-            out += cur.decode(raw)
+            var s = cur.decode(raw)
+            pen_w += _est_width(s, font_size)
+            out += s^
         elif c == 91:  # [ — TJ operand array (kerned show)
-            i = _show_tj_array(content, i, cur, out)
+            i = _show_tj_array(content, i, cur, out, font_size, pen_w)
         elif c == 60:  # <
             if i + 1 < n and content[i + 1] == 60:
                 i += 2  # << dict
             else:
                 var raw = List[UInt8]()
                 i = _read_hex_raw(content, i, raw)
-                out += cur.decode(raw)
+                var s = cur.decode(raw)
+                pen_w += _est_width(s, font_size)
+                out += s^
         elif c == 47:  # /Name
             last_name = _name_at(content, i)
         elif c == 39 or c == 34:  # ' or " — next-line-and-show
             out += "\n"
+            pen_w = 0.0
             i += 1
         elif _is_digit(c) or c == 45 or c == 43 or c == 46:
             # A numeric operand (or a run of them) — peek at the operator that
@@ -405,15 +444,20 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
                 if (b == 100 or b == 68) and cnt >= 2:  # Td / TD: dx dy
                     var dx = nums[cnt - 2]
                     var dy = nums[cnt - 1]
-                    _advance(out, x, y, have_pos, x + dx, y + dy, gap)
+                    _advance(out, x, y, have_pos, x + dx, y + dy, gap, pen_w,
+                             font_size)
                     have_pos = True
+                    pen_w = 0.0
                 elif b == 109 and cnt >= 6:  # Tm a b c d e f (e,f = translation)
-                    _advance(out, x, y, have_pos, nums[4], nums[5], gap)
+                    _advance(out, x, y, have_pos, nums[4], nums[5], gap, pen_w,
+                             font_size)
                     have_pos = True
+                    pen_w = 0.0
                 elif b == 42:  # T* — next line (leading); always a newline
                     if have_pos:
                         out += "\n"
                     have_pos = True
+                    pen_w = 0.0
                 elif b == 102 and cnt >= 1:  # Tf — font size precedes the op
                     font_size = nums[cnt - 1]
                     if font_size < 0:
@@ -429,6 +473,7 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
                     if have_pos:
                         out += "\n"
                     have_pos = True
+                    pen_w = 0.0
                 elif b == 102:  # Tf — select font
                     var idx = ft.get(last_name)
                     if idx >= 0:
@@ -448,15 +493,24 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
 
 
 def _advance(mut out: Buf, mut x: Float64, mut y: Float64, have_pos: Bool,
-             nx: Float64, ny: Float64, word_gap: Float64):
+             nx: Float64, ny: Float64, word_gap: Float64, pen_w: Float64,
+             font_size: Float64):
     """Move the text pen to (nx, ny), emitting a newline on a real vertical move
-    and a space on a word-sized horizontal gap (> `word_gap`) on the same line."""
+    and a space on a word-sized horizontal gap on the same line.
+
+    `pen_w` is the estimated width of the glyphs drawn since the previous move:
+    the carriage is *expected* to advance that far, so only the *excess* over it
+    counts toward a word gap. Without this, a PDF that places each glyph with its
+    own `(c) Tj  N 0 Td` step wedges a space between every pair of letters."""
     if have_pos:
+        var nl = _V_NEWLINE_EM * font_size
+        if nl < _V_NEWLINE_MIN:
+            nl = _V_NEWLINE_MIN
         var dy = ny - y
-        if dy > _V_NEWLINE or dy < -_V_NEWLINE:
+        if dy > nl or dy < -nl:
             out += "\n"
         else:
-            var dx = nx - x
+            var dx = (nx - x) - pen_w   # gap beyond the glyphs already drawn
             if dx > word_gap:
                 var lb = out.last_byte()
                 if lb != -1 and lb != 32 and lb != 10:  # not after space/newline
