@@ -10,7 +10,7 @@ channels = [
 platforms = ["osx-arm64"]
 
 [dependencies]
-mojo = "==1.0.0b3.dev2026061206"
+mojo = "==1.0.0b3.dev2026062206"
 # zlib for the FlateDecode shim (built from the sibling zlib.mojo checkout).
 zlib = ">=1.3.1,<2"
 

@@ -70,4 +70,4 @@ output):
 3. **More filters** — LZW, ASCII85, ASCIIHex (v1 is FlateDecode + raw).
 4. **Encrypted / scanned-image (OCR) PDFs** — out of scope.
 
-macOS / Apple Silicon (`osx-arm64`), Mojo nightly `1.0.0b3.dev2026061206`.
+macOS / Apple Silicon (`osx-arm64`), Mojo nightly `1.0.0b3.dev2026062206`.
