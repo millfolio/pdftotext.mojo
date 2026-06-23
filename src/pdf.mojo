@@ -519,6 +519,247 @@ def _advance(mut out: Buf, mut x: Float64, mut y: Float64, have_pos: Bool,
     y = ny
 
 
+# ── layout-preserving extraction (column-aligned) ─────────────────────────────
+# `_extract_with_fonts` STREAMS text in draw order, which collapses a table's
+# columns: a row's date / description / amount / running-balance cells arrive on
+# separate lines (any vertical jitter or column-major draw order breaks them up),
+# so the reconstructed text loses the column structure a statement parser needs.
+# The layout path instead COLLECTS every shown run with its (x, y) text-space
+# position, then regroups runs into visual ROWS by y (regardless of draw order)
+# and orders each row left-to-right by x with spacing proportional to the gaps —
+# i.e. pdftotext's `-layout`. A transaction row then comes out on ONE line with
+# its columns aligned, so amount vs running-balance vs the deposit/withdrawal
+# column are recoverable.
+
+@fieldwise_init
+struct _Frag(Copyable, Movable):
+    """One shown text run captured at its text-space pen position."""
+    var y: Float64
+    var x: Float64
+    var fs: Float64
+    var text: String
+
+
+def _collect_frags(content: List[UInt8], ft: FontTable) raises -> List[_Frag]:
+    """Mirror `_extract_with_fonts`'s operator parsing, but append a `_Frag` per
+    shown run (at the current pen) instead of streaming — and update the pen on
+    Td/Tm/T* WITHOUT emitting spaces/newlines (the layout pass derives those from
+    geometry)."""
+    var frags = List[_Frag]()
+    var n = len(content)
+    var i = 0
+    var cur = Font()
+    var last_name = String("")
+    # Proper text positioning: the text LINE matrix (tlm) is the start of the
+    # current line; Td/TD/T*/Tm move IT, and the pen starts there and advances by
+    # the glyph widths as text is shown. Td is relative to the LINE START, not the
+    # pen — using the pen (which already advanced over the shown glyphs) makes both
+    # x and y drift by each run's width, staircasing a table instead of aligning it.
+    var tlm_x = 0.0
+    var tlm_y = 0.0
+    var pen_x = 0.0
+    var pen_y = 0.0
+    var leading = 0.0
+    var font_size = 12.0
+    while i < n:
+        var _start = i
+        var c = content[i]
+        if c == 40:  # ( literal string
+            var raw = List[UInt8]()
+            i = _read_literal_raw(content, i, raw)
+            var s = cur.decode(raw)
+            if s.byte_length() > 0:
+                var w = _est_width(s, font_size)
+                frags.append(_Frag(pen_y, pen_x, font_size, s^))
+                pen_x += w
+        elif c == 91:  # [ — TJ array; concatenate into one run
+            i += 1
+            var s = String("")
+            while i < n:
+                var _s = i
+                var cc = content[i]
+                if cc == 93:  # ]
+                    i += 1
+                    break
+                elif cc == 40:
+                    var raw = List[UInt8]()
+                    i = _read_literal_raw(content, i, raw)
+                    s += cur.decode(raw)
+                elif cc == 60:
+                    var raw = List[UInt8]()
+                    i = _read_hex_raw(content, i, raw)
+                    s += cur.decode(raw)
+                elif _is_digit(cc) or cc == 45 or cc == 43 or cc == 46:
+                    var adj = _read_number(content, i)
+                    if (adj > _TJ_WORDGAP or adj < -_TJ_WORDGAP) and s.byte_length() > 0 and not s.endswith(" "):
+                        s += " "
+                else:
+                    i += 1
+                if i == _s:
+                    i += 1
+            if s.byte_length() > 0:
+                var w = _est_width(s, font_size)
+                frags.append(_Frag(pen_y, pen_x, font_size, s^))
+                pen_x += w
+        elif c == 60:  # <
+            if i + 1 < n and content[i + 1] == 60:
+                i += 2  # << dict
+            else:
+                var raw = List[UInt8]()
+                i = _read_hex_raw(content, i, raw)
+                var s = cur.decode(raw)
+                if s.byte_length() > 0:
+                    var w = _est_width(s, font_size)
+                    frags.append(_Frag(pen_y, pen_x, font_size, s^))
+                    pen_x += w
+        elif c == 47:  # /Name
+            last_name = _name_at(content, i)
+            i += 1
+        elif c == 39 or c == 34:  # ' or " — next-line-and-show
+            tlm_y -= leading if leading > 0.0 else font_size
+            pen_x = tlm_x
+            pen_y = tlm_y
+            i += 1
+        elif _is_digit(c) or c == 45 or c == 43 or c == 46:
+            var nums = List[Float64]()
+            var j = i
+            while len(nums) < 6:
+                var save = j
+                var v = _read_number(content, j)
+                if j == save:
+                    break
+                nums.append(v)
+                var k = j
+                while k < n and _is_ws(content[k]):
+                    k += 1
+                if k >= n or not (_is_digit(content[k]) or content[k] == 45
+                                  or content[k] == 43 or content[k] == 46):
+                    break
+            i = j
+            while i < n and _is_ws(content[i]):
+                i += 1
+            if i + 1 < n and content[i] == 84:  # 'T'
+                var b = content[i + 1]
+                var cnt = len(nums)
+                if (b == 100 or b == 68) and cnt >= 2:  # Td / TD — relative to LINE start
+                    tlm_x += nums[cnt - 2]
+                    tlm_y += nums[cnt - 1]
+                    if b == 68:                          # TD also sets leading = -ty
+                        leading = -nums[cnt - 1]
+                    pen_x = tlm_x
+                    pen_y = tlm_y
+                elif b == 109 and cnt >= 6:  # Tm a b c d e f — absolute
+                    tlm_x = nums[4]
+                    tlm_y = nums[5]
+                    pen_x = nums[4]
+                    pen_y = nums[5]
+                elif b == 76 and cnt >= 1:  # TL — set leading
+                    leading = nums[cnt - 1]
+                    if leading < 0.0:
+                        leading = -leading
+                elif b == 102 and cnt >= 1:  # Tf size
+                    font_size = nums[cnt - 1]
+                    if font_size < 0:
+                        font_size = -font_size
+        elif _is_alpha(c):
+            var j = i
+            while j < n and (_is_alpha(content[j]) or content[j] == 42):
+                j += 1
+            var ln = j - i
+            if ln == 2 and content[i] == 84:  # 'T_'
+                var b = content[i + 1]
+                if b == 42:  # T* — next line by leading
+                    tlm_y -= leading if leading > 0.0 else font_size
+                    pen_x = tlm_x
+                    pen_y = tlm_y
+                elif b == 102:  # Tf select
+                    var idx = ft.get(last_name)
+                    if idx >= 0:
+                        cur = ft.fonts[idx].copy()
+                    else:
+                        cur = Font()
+            elif ln == 2 and content[i] == 66 and content[i + 1] == 84:  # BT — reset
+                tlm_x = 0.0
+                tlm_y = 0.0
+                pen_x = 0.0
+                pen_y = 0.0
+            i = j
+        else:
+            i += 1
+        if i == _start:
+            i += 1
+    return frags^
+
+
+def _layout_frags(frags: List[_Frag]) raises -> String:
+    """Regroup `frags` into visual rows by y (a Dict bucket per quantized baseline,
+    so draw order doesn't matter), top-to-bottom; within a row, order left-to-right
+    by x and pad with spaces proportional to the horizontal gaps."""
+    if len(frags) == 0:
+        return String("")
+    comptime Y_TOL = 2.5         # text-space units; runs within this share a row
+    var bucket = Dict[Int, Int]()  # y-key -> index into groups
+    var keys = List[Int]()
+    var groups = List[List[_Frag]]()
+    for f in range(len(frags)):
+        var yv = frags[f].y / Y_TOL
+        var key = Int(yv + 0.5) if yv >= 0.0 else Int(yv - 0.5)
+        if key in bucket:
+            groups[bucket[key]].append(frags[f].copy())
+        else:
+            bucket[key] = len(groups)
+            keys.append(key)
+            var g = List[_Frag]()
+            g.append(frags[f].copy())
+            groups.append(g^)
+    # rows top-to-bottom: PDF y increases UPWARD, so sort keys DESCENDING.
+    for a in range(1, len(keys)):
+        var kk = keys[a]
+        var gg = groups[a].copy()
+        var b = a - 1
+        while b >= 0 and keys[b] < kk:
+            keys[b + 1] = keys[b]
+            groups[b + 1] = groups[b].copy()
+            b -= 1
+        keys[b + 1] = kk
+        groups[b + 1] = gg^
+    var out = String("")
+    for g in range(len(groups)):
+        # left-to-right within the row.
+        for a in range(1, len(groups[g])):
+            var kf = groups[g][a].copy()
+            var b = a - 1
+            while b >= 0 and groups[g][b].x > kf.x:
+                groups[g][b + 1] = groups[g][b].copy()
+                b -= 1
+            groups[g][b + 1] = kf^
+        var line = String("")
+        var penx = 0.0
+        for t in range(len(groups[g])):
+            ref fr = groups[g][t]
+            if t > 0:
+                # Only a gap BEYOND the glyphs already drawn, and past a word-sized
+                # threshold, opens space — so per-glyph-positioned text (each letter
+                # its own frag) doesn't get a space wedged between every letter.
+                # Column gaps (≫ a word) get proportional spaces so columns align.
+                var gap = fr.x - penx
+                var space_w = fr.fs * 0.25
+                if space_w <= 0.0:
+                    space_w = 2.0
+                if gap > _H_WORDGAP_EM * fr.fs:
+                    var nsp = Int(gap / space_w + 0.5)
+                    if nsp < 1:
+                        nsp = 1
+                    if nsp > 60:
+                        nsp = 60
+                    for _sp in range(nsp):
+                        line += " "
+            line += fr.text
+            penx = fr.x + _est_width(fr.text, fr.fs)
+        out += line + "\n"
+    return out^
+
+
 def extract_content(content: List[UInt8]) raises -> String:
     """Latin-1 text from one content stream (no font map). Kept for the
     no-resources case + tests."""
@@ -1011,6 +1252,26 @@ def extract_text(data: List[UInt8]) raises -> String:
         var content = page_content(data, omap, pages[pi])
         var ft = build_fonts(data, omap, pages[pi])
         out += _extract_with_fonts(content, ft)
+    return out^
+
+
+def extract_text_layout(data: List[UInt8]) raises -> String:
+    """Like `extract_text`, but LAYOUT-PRESERVING: each page's runs are regrouped
+    into visual rows (by y) and aligned left-to-right (by x), so table columns —
+    a statement's date / description / amount / running-balance — stay on one line.
+    Used by the indexer's transaction extraction; `extract_text` (stream order)
+    still backs chunking/search."""
+    var omap = _build_objmap(data)
+    var pages = page_objs(data, omap)
+    if len(pages) == 0:
+        return _extract_fallback(data)
+    var out = String("")
+    for pi in range(len(pages)):
+        if pi > 0:
+            out += "\n"
+        var content = page_content(data, omap, pages[pi])
+        var ft = build_fonts(data, omap, pages[pi])
+        out += _layout_frags(_collect_frags(content, ft))
     return out^
 
 
