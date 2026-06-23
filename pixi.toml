@@ -19,6 +19,6 @@ zlib = ">=1.3.1,<2"
 # dlopen at runtime resolves it. Mirrors how headgate builds flare's shims.
 ffi = "bash ../zlib.mojo/src/ffi/build.sh"
 build = { cmd = "mkdir -p build && mojo build src/main.mojo -I src -I ../zlib.mojo/src -o build/pdftotext", depends-on = ["ffi"] }
-test  = { cmd = "mkdir -p build && mojo build src/pdf_test.mojo -I src -I ../zlib.mojo/src -o build/pdf-test && ./build/pdf-test", depends-on = ["ffi"] }
+test  = { cmd = "mkdir -p build && mojo build test/pdf_test.mojo -I src -I ../zlib.mojo/src -o build/pdf-test && ./build/pdf-test", depends-on = ["ffi"] }
 # Extract text from a PDF: pixi run extract -- path/to/file.pdf
 extract = { cmd = "./build/pdftotext", depends-on = ["build"] }
