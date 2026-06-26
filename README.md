@@ -1,5 +1,7 @@
 # pdftotext.mojo
 
+> 💬 **Community:** questions, ideas, and show-and-tell live in [GitHub Discussions](https://github.com/millfolio/millfolio/discussions).
+
 > Part of [**millfolio**](https://millfolio.app) — local-first tooling in Mojo.
 
 A **from-scratch PDF → text** extractor in Mojo. No C PDF engine, no Python — it
