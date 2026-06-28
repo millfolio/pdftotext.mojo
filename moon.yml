@@ -4,6 +4,6 @@ tags: ['mojo']
 
 tasks:
   check:
-    command: 'pixi run build'
+    command: 'pixi run test'
     toolchain: 'system'
-    inputs: ['src/**/*.mojo', 'pixi.toml', 'pixi.lock']
+    inputs: ['src/**/*.mojo', 'test/**/*', 'tests/**/*', 'pixi.toml', 'pixi.lock']
