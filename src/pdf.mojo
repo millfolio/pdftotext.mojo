@@ -256,16 +256,16 @@ def _name_at(content: List[UInt8], mut p: Int) -> String:
 # between *every* pair of letters — "W ells Fargo custom er"). The vertical
 # newline threshold scales with the font size too (a small move is a
 # sub/superscript; a line is roughly a full line of leading).
-alias _GLYPH_EM = 0.5  # estimated glyph advance, in em (× font size)
-alias _V_NEWLINE_EM = 0.3  # |Δy| beyond this × font size ⇒ newline
-alias _V_NEWLINE_MIN = 4.0  # …but never less than this many units (small fonts)
+comptime _GLYPH_EM = 0.5  # estimated glyph advance, in em (× font size)
+comptime _V_NEWLINE_EM = 0.3  # |Δy| beyond this × font size ⇒ newline
+comptime _V_NEWLINE_MIN = 4.0  # …but never less than this many units (small fonts)
 # A positioning move opens a space only when it jumps past the estimated glyph
 # width by more than this × font size. A real space-only gap (no space glyph) is
 # ≥ a full space (~0.25 em) on top of a glyph; the slack here absorbs the spread
 # between our flat 0.5-em estimate and a wide glyph's true advance (W, m ≈ 0.85
 # em) so per-glyph-positioned text doesn't get a space wedged between letters.
-alias _H_WORDGAP_EM = 0.55  # Δx beyond glyphs + this × font size ⇒ space
-alias _TJ_WORDGAP = 200.0  # |TJ adjustment| (‰ em) beyond this ⇒ space
+comptime _H_WORDGAP_EM = 0.55  # Δx beyond glyphs + this × font size ⇒ space
+comptime _TJ_WORDGAP = 200.0  # |TJ adjustment| (‰ em) beyond this ⇒ space
 
 
 def _est_width(s: String, font_size: Float64) -> Float64:

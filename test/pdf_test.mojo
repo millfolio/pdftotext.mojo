@@ -1,4 +1,4 @@
-"""pdf extraction gate: content-stream text ops + a FlateDecode round-trip
+"""PDF extraction gate: content-stream text ops + a FlateDecode round-trip
 (deflate a content stream via zlib.mojo, assemble a minimal PDF, extract)."""
 
 from pdf import extract_text, extract_content, read_file
