@@ -23,11 +23,19 @@ def _usage():
 
 def _zlib_ok() -> Bool:
     """Self-check: inflate a tiny known buffer (zlib of 'ok' -> 2 bytes). Fails if
-    libzlibmojo.so can't be loaded — in which case PDF /FlateDecode can't decode."""
+    libzlibmojo.so can't be loaded — in which case PDF /FlateDecode can't decode.
+    """
     var probe = List[Int]()
-    probe.append(0x78); probe.append(0x9C); probe.append(0xCB); probe.append(0xCF)
-    probe.append(0x06); probe.append(0x00); probe.append(0x01); probe.append(0x4B)
-    probe.append(0x00); probe.append(0xDB)
+    probe.append(0x78)
+    probe.append(0x9C)
+    probe.append(0xCB)
+    probe.append(0xCF)
+    probe.append(0x06)
+    probe.append(0x00)
+    probe.append(0x01)
+    probe.append(0x4B)
+    probe.append(0x00)
+    probe.append(0xDB)
     var b = List[UInt8]()
     for i in range(len(probe)):
         b.append(UInt8(probe[i]))
@@ -79,7 +87,9 @@ def main() raises:
     if not info and not _zlib_ok():
         print("error: cannot load the zlib decoder (libzlibmojo.so) —")
         print("  PDF /FlateDecode streams can't be decompressed.")
-        print("  Run via 'tools/pdftotext <file>' (it sets CONDA_PREFIX), or set")
+        print(
+            "  Run via 'tools/pdftotext <file>' (it sets CONDA_PREFIX), or set"
+        )
         print("  CONDA_PREFIX to the pixi env so the shim resolves.")
         return
 

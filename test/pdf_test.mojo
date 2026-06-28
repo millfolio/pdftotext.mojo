@@ -23,7 +23,8 @@ def main() raises:
     # 1. Content-stream text operators (uncompressed path): literal strings +
     #    newline on positioning ops.
     var c1 = _b(
-        "BT /F1 12 Tf 72 700 Td (Hello, PDF!) Tj 0 -14 Td (Second line) Tj ET")
+        "BT /F1 12 Tf 72 700 Td (Hello, PDF!) Tj 0 -14 Td (Second line) Tj ET"
+    )
     var t1 = extract_content(c1)
     if t1.find("Hello, PDF!") == -1 or t1.find("Second line") == -1:
         raise Error("content extraction failed: [" + t1 + "]")
@@ -37,7 +38,8 @@ def main() raises:
         "BT /F1 12 Tf 72 700 Td (o) Tj 7 0 Td (o) Tj 7 0 Td (n) Tj 7 0 Td "
         "12 0 Td (a) Tj 7 0 Td (s) Tj 7 0 Td 12 0 Td (y) Tj 7 0 Td (o) Tj "
         "7 0 Td (u) Tj 7 0 Td -200 -16 Td "
-        "[(T) -40 (o) -20 (t) -15 (a) -10 (l) 250 (d) -20 (u) -15 (e)] TJ ET")
+        "[(T) -40 (o) -20 (t) -15 (a) -10 (l) 250 (d) -20 (u) -15 (e)] TJ ET"
+    )
     var t1b = extract_content(c1b)
     if t1b.find("oon as you") == -1:
         raise Error("per-glyph line collapsed/garbled: [" + t1b + "]")
@@ -62,7 +64,10 @@ def main() raises:
     # 3. Real-PDF fixture: full path through the object map + page tree (xref,
     #    catalog/pages/page, FlateDecode content, base-14 Helvetica/WinAnsi).
     var t3 = extract_text(read_file("tests/fixtures/hello.pdf"))
-    if t3.find("Hello, headgate!") == -1 or t3.find("PDF parsing in pure Mojo.") == -1:
+    if (
+        t3.find("Hello, headgate!") == -1
+        or t3.find("PDF parsing in pure Mojo.") == -1
+    ):
         raise Error("hello.pdf extraction failed: [" + t3 + "]")
 
     # 4. /ToUnicode: the content shows hex codes <0102030304>; only the font's
@@ -78,12 +83,13 @@ def main() raises:
     #    top row (higher y) first, with the date adjacent to its own description.
     var lay = _b(
         "BT /F1 8 Tf "
-        "1 0 0 1 400 700 Tm (4.50) Tj "       # amount col drawn first (row 1)
-        "1 0 0 1 360 688 Tm (89.99) Tj "      # amount col drawn first (row 2)
-        "1 0 0 1 72 700 Tm (4/20) Tj "        # date col (row 1)
+        "1 0 0 1 400 700 Tm (4.50) Tj "  # amount col drawn first (row 1)
+        "1 0 0 1 360 688 Tm (89.99) Tj "  # amount col drawn first (row 2)
+        "1 0 0 1 72 700 Tm (4/20) Tj "  # date col (row 1)
         "1 0 0 1 150 700 Tm (Coffee Shop) Tj "
-        "1 0 0 1 72 688 Tm (4/21) Tj "        # date col (row 2)
-        "1 0 0 1 150 688 Tm (Hardware Store) Tj ET")
+        "1 0 0 1 72 688 Tm (4/21) Tj "  # date col (row 2)
+        "1 0 0 1 150 688 Tm (Hardware Store) Tj ET"
+    )
     var tl = _layout_frags(_collect_frags(lay, FontTable()))
     var lines = tl.split("\n")
     var row1 = String("")
@@ -95,11 +101,19 @@ def main() raises:
         elif s.find("4/21") != -1:
             row2 = s
     # row 1: date, description, amount all on ONE line, in column order.
-    if row1.find("4/20") == -1 or row1.find("Coffee Shop") == -1 or row1.find("4.50") == -1:
+    if (
+        row1.find("4/20") == -1
+        or row1.find("Coffee Shop") == -1
+        or row1.find("4.50") == -1
+    ):
         raise Error("layout row 1 not regrouped onto one line: [" + row1 + "]")
     if not (row1.find("4/20") < row1.find("Coffee Shop") < row1.find("4.50")):
         raise Error("layout row 1 columns out of x-order: [" + row1 + "]")
-    if row2.find("4/21") == -1 or row2.find("Hardware Store") == -1 or row2.find("89.99") == -1:
+    if (
+        row2.find("4/21") == -1
+        or row2.find("Hardware Store") == -1
+        or row2.find("89.99") == -1
+    ):
         raise Error("layout row 2 not regrouped onto one line: [" + row2 + "]")
     # top row (y=700) must precede the lower row (y=688) despite draw order.
     if tl.find("4/20") > tl.find("4/21"):

@@ -18,6 +18,7 @@ from zlib import inflate
 
 # ── byte helpers ─────────────────────────────────────────────────────────────
 
+
 def _ascii(s: String) -> List[UInt8]:
     var out = List[UInt8]()
     var p = s.unsafe_ptr()
@@ -27,7 +28,8 @@ def _ascii(s: String) -> List[UInt8]:
 
 
 def _find(data: List[UInt8], pat: List[UInt8], start: Int) -> Int:
-    """Index of the first occurrence of `pat` in `data` at/after `start`, or -1."""
+    """Index of the first occurrence of `pat` in `data` at/after `start`, or -1.
+    """
     var n = len(data)
     var m = len(pat)
     if m == 0 or m > n:
@@ -73,6 +75,7 @@ def _hexval(c: UInt8) -> Int:
 
 
 # ── stream extraction ────────────────────────────────────────────────────────
+
 
 def decode_streams(data: List[UInt8]) raises -> List[List[UInt8]]:
     """Return the decoded bytes of every content stream (those containing `BT`),
@@ -131,7 +134,10 @@ def decode_streams(data: List[UInt8]) raises -> List[List[UInt8]]:
 
 # ── content-stream text extraction ───────────────────────────────────────────
 
-def _read_literal_raw(content: List[UInt8], start: Int, mut raw: List[UInt8]) -> Int:
+
+def _read_literal_raw(
+    content: List[UInt8], start: Int, mut raw: List[UInt8]
+) -> Int:
     """Parse a `(...)` literal string at `start` (the `(`); append its decoded
     BYTES (escapes resolved) to `raw`; return the index past the closing `)`."""
     var n = len(content)
@@ -159,7 +165,12 @@ def _read_literal_raw(content: List[UInt8], start: Int, mut raw: List[UInt8]) ->
             elif e >= 48 and e <= 55:  # \ddd octal
                 var v = Int(e) - 48
                 var k = 0
-                while k < 2 and i + 1 < n and content[i + 1] >= 48 and content[i + 1] <= 55:
+                while (
+                    k < 2
+                    and i + 1 < n
+                    and content[i + 1] >= 48
+                    and content[i + 1] <= 55
+                ):
                     i += 1
                     v = v * 8 + (Int(content[i]) - 48)
                     k += 1
@@ -184,7 +195,9 @@ def _read_literal_raw(content: List[UInt8], start: Int, mut raw: List[UInt8]) ->
     return i
 
 
-def _read_hex_raw(content: List[UInt8], start: Int, mut raw: List[UInt8]) -> Int:
+def _read_hex_raw(
+    content: List[UInt8], start: Int, mut raw: List[UInt8]
+) -> Int:
     """Parse a `<...>` hex string at `start`; append decoded bytes; return index
     past `>`."""
     var n = len(content)
@@ -209,13 +222,23 @@ def _read_hex_raw(content: List[UInt8], start: Int, mut raw: List[UInt8]) -> Int
 
 
 def _name_at(content: List[UInt8], mut p: Int) -> String:
-    """Read a `/Name` token at `p` (the `/`); return the name (no slash); advance p."""
+    """Read a `/Name` token at `p` (the `/`); return the name (no slash); advance p.
+    """
     var n = len(content)
     p += 1  # skip '/'
     var s = String("")
     while p < n:
         var c = content[p]
-        if _is_ws(c) or c == 47 or c == 60 or c == 62 or c == 91 or c == 93 or c == 40 or c == 41:
+        if (
+            _is_ws(c)
+            or c == 47
+            or c == 60
+            or c == 62
+            or c == 91
+            or c == 93
+            or c == 40
+            or c == 41
+        ):
             break
         s += chr(Int(c))
         p += 1
@@ -233,16 +256,16 @@ def _name_at(content: List[UInt8], mut p: Int) -> String:
 # between *every* pair of letters — "W ells Fargo custom er"). The vertical
 # newline threshold scales with the font size too (a small move is a
 # sub/superscript; a line is roughly a full line of leading).
-alias _GLYPH_EM = 0.5         # estimated glyph advance, in em (× font size)
-alias _V_NEWLINE_EM = 0.3     # |Δy| beyond this × font size ⇒ newline
-alias _V_NEWLINE_MIN = 4.0    # …but never less than this many units (small fonts)
+alias _GLYPH_EM = 0.5  # estimated glyph advance, in em (× font size)
+alias _V_NEWLINE_EM = 0.3  # |Δy| beyond this × font size ⇒ newline
+alias _V_NEWLINE_MIN = 4.0  # …but never less than this many units (small fonts)
 # A positioning move opens a space only when it jumps past the estimated glyph
 # width by more than this × font size. A real space-only gap (no space glyph) is
 # ≥ a full space (~0.25 em) on top of a glyph; the slack here absorbs the spread
 # between our flat 0.5-em estimate and a wide glyph's true advance (W, m ≈ 0.85
 # em) so per-glyph-positioned text doesn't get a space wedged between letters.
-alias _H_WORDGAP_EM = 0.55    # Δx beyond glyphs + this × font size ⇒ space
-alias _TJ_WORDGAP = 200.0     # |TJ adjustment| (‰ em) beyond this ⇒ space
+alias _H_WORDGAP_EM = 0.55  # Δx beyond glyphs + this × font size ⇒ space
+alias _TJ_WORDGAP = 200.0  # |TJ adjustment| (‰ em) beyond this ⇒ space
 
 
 def _est_width(s: String, font_size: Float64) -> Float64:
@@ -259,6 +282,7 @@ struct Buf(Movable):
     """An output buffer over `List[UInt8]` so `+=` is amortized O(1). Mojo's
     `String +=` reallocates per append — O(n^2) on the per-glyph text hot path,
     which hung extraction for minutes on large / per-glyph-positioned PDFs."""
+
     var data: List[UInt8]
 
     def __init__(out self):
@@ -313,8 +337,14 @@ def _read_number(content: List[UInt8], mut p: Int) -> Float64:
     return sign * (ipart + frac / scale)
 
 
-def _show_tj_array(content: List[UInt8], start: Int, cur: Font, mut out: Buf,
-                   font_size: Float64, mut pen_w: Float64) raises -> Int:
+def _show_tj_array(
+    content: List[UInt8],
+    start: Int,
+    cur: Font,
+    mut out: Buf,
+    font_size: Float64,
+    mut pen_w: Float64,
+) raises -> Int:
     """Show a `TJ` operand array `[ (s) num <h> num … ]` at `start` (the `[`):
     concatenate the strings, turning a number whose magnitude opens a word-sized
     gap into a single space. Return the index past `]`. Accumulates the estimated
@@ -349,7 +379,9 @@ def _show_tj_array(content: List[UInt8], start: Int, cur: Font, mut out: Buf,
             pen_w += -(adj / 1000.0) * font_size
             if adj > _TJ_WORDGAP or adj < -_TJ_WORDGAP:
                 var lb = out.last_byte()
-                if lb != -1 and lb != 32 and lb != 10:  # not after space/newline
+                if (
+                    lb != -1 and lb != 32 and lb != 10
+                ):  # not after space/newline
                     out += " "
         else:
             i += 1
@@ -375,15 +407,15 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
     var out = Buf()
     var n = len(content)
     var i = 0
-    var cur = Font()           # default: Latin-1
+    var cur = Font()  # default: Latin-1
     var last_name = String("")
     # Text pen position (text-space units). Td/TD are relative to the line start;
     # Tm/cm set it absolutely. We don't have glyph widths, so x only tracks the
     # *positioning* operators — enough to tell a word gap from a glyph advance.
     var x = 0.0
     var y = 0.0
-    var have_pos = False       # seen a position yet (first move sets the origin)
-    var font_size = 12.0       # current /Fx <size> Tf size (for the word gap)
+    var have_pos = False  # seen a position yet (first move sets the origin)
+    var font_size = 12.0  # current /Fx <size> Tf size (for the word gap)
     # Estimated width (text-space units) of the glyphs shown since the last
     # positioning move — subtracted from the next Td/Tm step so the carriage
     # advancing over its own glyphs isn't mistaken for a word gap.
@@ -430,8 +462,12 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
                 var k = j
                 while k < n and _is_ws(content[k]):
                     k += 1
-                if k >= n or not (_is_digit(content[k]) or content[k] == 45
-                                  or content[k] == 43 or content[k] == 46):
+                if k >= n or not (
+                    _is_digit(content[k])
+                    or content[k] == 45
+                    or content[k] == 43
+                    or content[k] == 46
+                ):
                     break
             i = j
             # whitespace, then the operator token
@@ -444,13 +480,33 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
                 if (b == 100 or b == 68) and cnt >= 2:  # Td / TD: dx dy
                     var dx = nums[cnt - 2]
                     var dy = nums[cnt - 1]
-                    _advance(out, x, y, have_pos, x + dx, y + dy, gap, pen_w,
-                             font_size)
+                    _advance(
+                        out,
+                        x,
+                        y,
+                        have_pos,
+                        x + dx,
+                        y + dy,
+                        gap,
+                        pen_w,
+                        font_size,
+                    )
                     have_pos = True
                     pen_w = 0.0
-                elif b == 109 and cnt >= 6:  # Tm a b c d e f (e,f = translation)
-                    _advance(out, x, y, have_pos, nums[4], nums[5], gap, pen_w,
-                             font_size)
+                elif (
+                    b == 109 and cnt >= 6
+                ):  # Tm a b c d e f (e,f = translation)
+                    _advance(
+                        out,
+                        x,
+                        y,
+                        have_pos,
+                        nums[4],
+                        nums[5],
+                        gap,
+                        pen_w,
+                        font_size,
+                    )
                     have_pos = True
                     pen_w = 0.0
                 elif b == 42:  # T* — next line (leading); always a newline
@@ -492,9 +548,17 @@ def _extract_with_fonts(content: List[UInt8], ft: FontTable) raises -> String:
     return out.to_string()
 
 
-def _advance(mut out: Buf, mut x: Float64, mut y: Float64, have_pos: Bool,
-             nx: Float64, ny: Float64, word_gap: Float64, pen_w: Float64,
-             font_size: Float64):
+def _advance(
+    mut out: Buf,
+    mut x: Float64,
+    mut y: Float64,
+    have_pos: Bool,
+    nx: Float64,
+    ny: Float64,
+    word_gap: Float64,
+    pen_w: Float64,
+    font_size: Float64,
+):
     """Move the text pen to (nx, ny), emitting a newline on a real vertical move
     and a space on a word-sized horizontal gap on the same line.
 
@@ -510,10 +574,12 @@ def _advance(mut out: Buf, mut x: Float64, mut y: Float64, have_pos: Bool,
         if dy > nl or dy < -nl:
             out += "\n"
         else:
-            var dx = (nx - x) - pen_w   # gap beyond the glyphs already drawn
+            var dx = (nx - x) - pen_w  # gap beyond the glyphs already drawn
             if dx > word_gap:
                 var lb = out.last_byte()
-                if lb != -1 and lb != 32 and lb != 10:  # not after space/newline
+                if (
+                    lb != -1 and lb != 32 and lb != 10
+                ):  # not after space/newline
                     out += " "
     x = nx
     y = ny
@@ -531,9 +597,11 @@ def _advance(mut out: Buf, mut x: Float64, mut y: Float64, have_pos: Bool,
 # its columns aligned, so amount vs running-balance vs the deposit/withdrawal
 # column are recoverable.
 
+
 @fieldwise_init
 struct _Frag(Copyable, Movable):
     """One shown text run captured at its text-space pen position."""
+
     var y: Float64
     var x: Float64
     var fs: Float64
@@ -591,7 +659,11 @@ def _collect_frags(content: List[UInt8], ft: FontTable) raises -> List[_Frag]:
                     s += cur.decode(raw)
                 elif _is_digit(cc) or cc == 45 or cc == 43 or cc == 46:
                     var adj = _read_number(content, i)
-                    if (adj > _TJ_WORDGAP or adj < -_TJ_WORDGAP) and s.byte_length() > 0 and not s.endswith(" "):
+                    if (
+                        (adj > _TJ_WORDGAP or adj < -_TJ_WORDGAP)
+                        and s.byte_length() > 0
+                        and not s.endswith(" ")
+                    ):
                         s += " "
                 else:
                     i += 1
@@ -632,8 +704,12 @@ def _collect_frags(content: List[UInt8], ft: FontTable) raises -> List[_Frag]:
                 var k = j
                 while k < n and _is_ws(content[k]):
                     k += 1
-                if k >= n or not (_is_digit(content[k]) or content[k] == 45
-                                  or content[k] == 43 or content[k] == 46):
+                if k >= n or not (
+                    _is_digit(content[k])
+                    or content[k] == 45
+                    or content[k] == 43
+                    or content[k] == 46
+                ):
                     break
             i = j
             while i < n and _is_ws(content[i]):
@@ -641,10 +717,12 @@ def _collect_frags(content: List[UInt8], ft: FontTable) raises -> List[_Frag]:
             if i + 1 < n and content[i] == 84:  # 'T'
                 var b = content[i + 1]
                 var cnt = len(nums)
-                if (b == 100 or b == 68) and cnt >= 2:  # Td / TD — relative to LINE start
+                if (
+                    b == 100 or b == 68
+                ) and cnt >= 2:  # Td / TD — relative to LINE start
                     tlm_x += nums[cnt - 2]
                     tlm_y += nums[cnt - 1]
-                    if b == 68:                          # TD also sets leading = -ty
+                    if b == 68:  # TD also sets leading = -ty
                         leading = -nums[cnt - 1]
                     pen_x = tlm_x
                     pen_y = tlm_y
@@ -678,7 +756,9 @@ def _collect_frags(content: List[UInt8], ft: FontTable) raises -> List[_Frag]:
                         cur = ft.fonts[idx].copy()
                     else:
                         cur = Font()
-            elif ln == 2 and content[i] == 66 and content[i + 1] == 84:  # BT — reset
+            elif (
+                ln == 2 and content[i] == 66 and content[i + 1] == 84
+            ):  # BT — reset
                 tlm_x = 0.0
                 tlm_y = 0.0
                 pen_x = 0.0
@@ -697,7 +777,7 @@ def _layout_frags(frags: List[_Frag]) raises -> String:
     by x and pad with spaces proportional to the horizontal gaps."""
     if len(frags) == 0:
         return String("")
-    comptime Y_TOL = 2.5         # text-space units; runs within this share a row
+    comptime Y_TOL = 2.5  # text-space units; runs within this share a row
     var bucket = Dict[Int, Int]()  # y-key -> index into groups
     var keys = List[Int]()
     var groups = List[List[_Frag]]()
@@ -769,6 +849,7 @@ def extract_content(content: List[UInt8]) raises -> String:
 
 # ── object map + page tree (reliable content-stream selection) ───────────────
 
+
 struct ObjMap(Movable):
     """Object number -> byte offset of its body (just after `N G obj`). Built by
     scanning for `obj` keywords — robust to a broken/absent xref, and avoids
@@ -827,7 +908,8 @@ def _build_objmap(data: List[UInt8]) -> ObjMap:
 
 
 def _read_int_fwd(data: List[UInt8], mut p: Int) -> Int:
-    """Skip whitespace then read a non-negative integer at `p`; advance `p`. -1 if none."""
+    """Skip whitespace then read a non-negative integer at `p`; advance `p`. -1 if none.
+    """
     var n = len(data)
     while p < n and _is_ws(data[p]):
         p += 1
@@ -841,7 +923,8 @@ def _read_int_fwd(data: List[UInt8], mut p: Int) -> Int:
 
 
 def _parse_ref(data: List[UInt8], mut p: Int) -> Int:
-    """Parse `N G R` at `p` (after skipping ws); return N (object number) or -1."""
+    """Parse `N G R` at `p` (after skipping ws); return N (object number) or -1.
+    """
     var save = p
     var num = _read_int_fwd(data, p)
     if num < 0:
@@ -895,7 +978,9 @@ def _contents_refs(data: List[UInt8], lo: Int, hi: Int) -> List[Int]:
     return out^
 
 
-def decode_object_stream(data: List[UInt8], omap: ObjMap, objnum: Int) raises -> List[UInt8]:
+def decode_object_stream(
+    data: List[UInt8], omap: ObjMap, objnum: Int
+) raises -> List[UInt8]:
     """Decoded bytes of object `objnum`'s stream (inflating /FlateDecode)."""
     var start = omap.get(objnum)
     if start < 0:
@@ -972,7 +1057,9 @@ def page_objs(data: List[UInt8], omap: ObjMap) -> List[Int]:
     return pages^
 
 
-def page_content(data: List[UInt8], omap: ObjMap, page_num: Int) raises -> List[UInt8]:
+def page_content(
+    data: List[UInt8], omap: ObjMap, page_num: Int
+) raises -> List[UInt8]:
     """Concatenated decoded content streams for one page."""
     var start = omap.get(page_num)
     var hi = _obj_end(data, start)
@@ -988,12 +1075,13 @@ def page_content(data: List[UInt8], omap: ObjMap, page_num: Int) raises -> List[
 
 # ── fonts + /ToUnicode CMaps ─────────────────────────────────────────────────
 
-struct Font(Movable, Copyable):
+
+struct Font(Copyable, Movable):
     """A font's character-code -> Unicode-text map (from its /ToUnicode CMap). An
     empty map means decode bytes as Latin-1 — correct for base-14 WinAnsi fonts,
     where the byte already IS the character."""
 
-    var code_len: Int          # bytes per character code (1 or 2)
+    var code_len: Int  # bytes per character code (1 or 2)
     var map: Dict[Int, String]  # char code -> Unicode text; O(1) lookup (was a
     #                             linear List scan per char → O(n^2) on big CMaps)
 
@@ -1205,9 +1293,12 @@ def _load_font(data: List[UInt8], omap: ObjMap, fontref: Int) raises -> Font:
     return f^
 
 
-def build_fonts(data: List[UInt8], omap: ObjMap, page_num: Int) raises -> FontTable:
+def build_fonts(
+    data: List[UInt8], omap: ObjMap, page_num: Int
+) raises -> FontTable:
     """Map each font name in the page's `/Resources /Font` dict to its loaded Font.
-    v1 handles an inline `/Font << /Fx N G R … >>` (indirect /Resources is a TODO)."""
+    v1 handles an inline `/Font << /Fx N G R … >>` (indirect /Resources is a TODO).
+    """
     var ft = FontTable()
     var start = omap.get(page_num)
     var hi = _obj_end(data, start)
@@ -1240,7 +1331,8 @@ def build_fonts(data: List[UInt8], omap: ObjMap, page_num: Int) raises -> FontTa
 def extract_text(data: List[UInt8]) raises -> String:
     """Top level: walk the object map to the page leaves, decode each page's
     /Contents, and extract its text through that page's fonts (applying
-    /ToUnicode). Falls back to the stream-scan heuristic if no pages are found."""
+    /ToUnicode). Falls back to the stream-scan heuristic if no pages are found.
+    """
     var omap = _build_objmap(data)
     var pages = page_objs(data, omap)
     if len(pages) == 0:
