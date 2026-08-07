@@ -1,4 +1,4 @@
-"""pdf — extract text from a PDF document (v1, from scratch in Mojo).
+"""`pdf` — extract text from a PDF document (v1, from scratch in Mojo).
 
 Pipeline:
   1. Scan the file for `stream … endstream` objects.
@@ -854,7 +854,7 @@ struct ObjMap(Movable):
     """Object number -> byte offset of its body (just after `N G obj`). Built by
     scanning for `obj` keywords — robust to a broken/absent xref, and avoids
     parsing xref *streams*. (Objects inside compressed /ObjStm are not seen — a
-    later phase.)"""
+    later phase.)."""
 
     var nums: List[Int]
     var offs: List[Int]
