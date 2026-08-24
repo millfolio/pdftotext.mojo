@@ -2,4 +2,4 @@ name = "pdftotext"
 version = "0.1.1"
 description = "A from-scratch PDF-to-text extractor in Mojo"
 tags = ["pdf", "documents", "text-extraction"]
-books = ["zlib-mojo"]
+tins = ["zlib-mojo"]
