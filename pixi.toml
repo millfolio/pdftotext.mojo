@@ -8,7 +8,7 @@ channels = [
     "https://conda.modular.com/max-nightly",
     "conda-forge",
 ]
-platforms = ["osx-arm64"]
+platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
 
 [dependencies]
 mojo = "==1.0.0"
@@ -28,7 +28,7 @@ extract = { cmd = "./build/pdftotext", depends-on = ["build"] }
 # Conda package name is pdftotext; the Mojo import stays `from pdf import …`.
 [package]
 name = "pdftotext"
-version = "0.1.2"
+version = "0.1.3"
 
 [package.build]
 backend = { name = "pixi-build-mojo", version = "0.*" }
@@ -41,11 +41,11 @@ extra-args = ["-I", "$PREFIX/lib/mojo"]
 
 [package.host-dependencies]
 mojo-compiler = "==1.0.0"
-zlib-mojo = { git = "https://github.com/millfolio/zlib.mojo.git", rev = "dcf51ee02f8febe3f47c36e61dd0f55459e8181c" }
+zlib-mojo = { git = "https://github.com/millfolio/zlib.mojo.git", rev = "f243ffab8dd7a84bce07eeced59053cc7a315e3d" }
 
 [package.build-dependencies]
 mojo-compiler = "==1.0.0"
 
 [package.run-dependencies]
 mojo-compiler = "==1.0.0"
-zlib-mojo = { git = "https://github.com/millfolio/zlib.mojo.git", rev = "dcf51ee02f8febe3f47c36e61dd0f55459e8181c" }
+zlib-mojo = { git = "https://github.com/millfolio/zlib.mojo.git", rev = "f243ffab8dd7a84bce07eeced59053cc7a315e3d" }
