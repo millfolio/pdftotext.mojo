@@ -1,5 +1,7 @@
 # pdftotext.mojo
 
+[![mojoshelf](https://mojoshelf.org/badge/pdftotext.svg)](https://mojoshelf.org/tins/pdftotext) [![mojo nightly](https://mojoshelf.org/badge/pdftotext/nightly.svg)](https://mojoshelf.org/tins/pdftotext)
+
 > 💬 **Community:** questions, ideas, and show-and-tell live in [GitHub Discussions](https://github.com/millfolio/millfolio/discussions).
 
 > Part of [**millfolio**](https://millfolio.app) — local-first tooling in Mojo.
@@ -48,6 +50,19 @@ into this env). Build a consumer with `-I src -I ../zlib.mojo/src`. The compiled
 binary dlopens `libzlibmojo.so` via `$CONDA_PREFIX/lib` — `tools/pdftotext` (or
 `pixi run`) sets that; a relocated copy next to the binary works too (the
 headgate distribution does this with `@loader_path`, like flare's shims).
+
+## Install as a mojoshelf tin
+
+Published on [mojoshelf](https://mojoshelf.org/tins/pdftotext) as `pdftotext`
+(pulls in the `zlib-mojo` tin automatically):
+
+```sh
+pixi shelf add pdftotext     # pixi mode (builds the zlib shim + .mojopkg)
+shelf add pdftotext          # or as git submodules
+```
+
+Maintainers release new versions with `shelf publish` from the repo root
+(see [getting started](https://mojoshelf.org/getting-started)).
 
 ## Status
 
