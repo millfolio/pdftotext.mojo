@@ -1,6 +1,6 @@
 [workspace]
 name = "pdftotext"
-version = "0.1.0"
+version = "0.1.3"
 authors = ["Marius S <marius@seritan.net>"]
 description = "A from-scratch PDF-to-text extractor in Mojo. Depends on zlib.mojo for FlateDecode."
 preview = ["pixi-build"]
